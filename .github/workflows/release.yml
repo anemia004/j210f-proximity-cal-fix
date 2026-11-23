@@ -5,11 +5,20 @@ on:
     branches:
       - main
       - master
+  release:
+    types:
+      - published
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: "Also publish/update GitHub Release"
+        type: boolean
+        default: true
 
 jobs:
-  release:
+  build:
     if: >-
+      github.event_name == 'release' ||
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.head_commit.message, ':fix') ||
       contains(github.event.head_commit.message, 'fix:') ||
@@ -29,10 +38,17 @@ jobs:
 
       - name: Read metadata from module.prop
         id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          ID=$(grep '^id=' module.prop | cut -d'=' -f2- | tr -d '\r')
-          NAME=$(grep '^name=' module.prop | cut -d'=' -f2- | tr -d '\r')
-          VERSION=$(grep '^version=' module.prop | cut -d'=' -f2- | tr -d '\r')
+          ID=$(grep '^id=' module.prop | head -n1 | cut -d'=' -f2- | tr -d '\r')
+          NAME=$(grep '^name=' module.prop | head -n1 | cut -d'=' -f2- | tr -d '\r')
+          if [ "$EVENT_NAME" = "release" ] && [ -n "$RELEASE_TAG" ]; then
+            VERSION="$RELEASE_TAG"
+          else
+            VERSION=$(grep '^version=' module.prop | head -n1 | cut -d'=' -f2- | tr -d '\r')
+          fi
           ZIP_NAME="${ID}-${VERSION}.zip"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -51,14 +67,28 @@ jobs:
       - name: Verify ZIP structure
         run: unzip -l "${{ steps.meta.outputs.zip_name }}"
 
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.zip_name }}
+          path: ${{ steps.meta.outputs.zip_name }}
+
       - name: Create or update GitHub Release
+        if: >-
+          github.event_name == 'release' ||
+          (github.event_name == 'workflow_dispatch' && inputs.create_release) ||
+          contains(github.event.head_commit.message, ':fix') ||
+          contains(github.event.head_commit.message, 'fix:') ||
+          contains(github.event.head_commit.message, ':release') ||
+          contains(github.event.head_commit.message, 'release:')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
           VERSION: ${{ steps.meta.outputs.version }}
           NAME: ${{ steps.meta.outputs.name }}
           ZIP_NAME: ${{ steps.meta.outputs.zip_name }}
         run: |
-          if gh release view "$VERSION" >/dev/null 2>&1; then
+          if [ "$EVENT_NAME" = "release" ] || gh release view "$VERSION" >/dev/null 2>&1; then
             gh release upload "$VERSION" "$ZIP_NAME" --clobber
           else
             gh release create "$VERSION" "$ZIP_NAME" \

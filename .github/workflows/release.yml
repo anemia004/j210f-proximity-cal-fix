@@ -1,0 +1,67 @@
+name: Build & Release Magisk Module
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, ':fix') ||
+      contains(github.event.head_commit.message, 'fix:') ||
+      contains(github.event.head_commit.message, ':feat') ||
+      contains(github.event.head_commit.message, 'feat:') ||
+      contains(github.event.head_commit.message, ':chore') ||
+      contains(github.event.head_commit.message, 'chore:') ||
+      contains(github.event.head_commit.message, ':release') ||
+      contains(github.event.head_commit.message, 'release:')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read metadata from module.prop
+        id: meta
+        run: |
+          ID=$(grep '^id=' module.prop | cut -d'=' -f2- | tr -d '\r')
+          NAME=$(grep '^name=' module.prop | cut -d'=' -f2- | tr -d '\r')
+          VERSION=$(grep '^version=' module.prop | cut -d'=' -f2- | tr -d '\r')
+          ZIP_NAME="${ID}-${VERSION}.zip"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Normalize LF endings, set permissions, and build ZIP
+        run: |
+          sed -i 's/\r$//' module.prop customize.sh post-fs-data.sh \
+            META-INF/com/google/android/updater-script \
+            META-INF/com/google/android/update-binary
+          chmod 0644 module.prop META-INF/com/google/android/updater-script
+          chmod 0755 customize.sh post-fs-data.sh META-INF/com/google/android/update-binary
+          zip -r9 "${{ steps.meta.outputs.zip_name }}" \
+            META-INF module.prop customize.sh post-fs-data.sh
+
+      - name: Verify ZIP structure
+        run: unzip -l "${{ steps.meta.outputs.zip_name }}"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          NAME: ${{ steps.meta.outputs.name }}
+          ZIP_NAME: ${{ steps.meta.outputs.zip_name }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "$ZIP_NAME" --clobber
+          else
+            gh release create "$VERSION" "$ZIP_NAME" \
+              --title "$NAME $VERSION" \
+              --generate-notes
+          fi

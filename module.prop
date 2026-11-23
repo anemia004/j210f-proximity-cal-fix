@@ -2,5 +2,5 @@ id=j210f_prox_cal_fix
 name=SM-J210F CM36672P Proximity Calibration Fix
 version=v1.0
 versionCode=1
-author=your-github-username
+author=anemia004
 description=Persists 16-bit crosstalk offset (1980 / 0x07bc) in /efs/FactoryApp/prox_cal for CM36672P on SM-J210F.
